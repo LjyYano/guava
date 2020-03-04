@@ -323,8 +323,10 @@ abstract class SmoothRateLimiter extends RateLimiter {
   /**
    * The time when the next request (no matter its size) will be granted. After granting a request,
    * this is pushed further in the future. Large requests push this further than small requests.
+   *
+   * could be either in the past or future
    */
-  private long nextFreeTicketMicros = 0L; // could be either in the past or future
+  private long nextFreeTicketMicros = 0L;
 
   private SmoothRateLimiter(SleepingStopwatch stopwatch) {
     super(stopwatch);
@@ -352,16 +354,23 @@ abstract class SmoothRateLimiter extends RateLimiter {
 
   @Override
   final long reserveEarliestAvailable(int requiredPermits, long nowMicros) {
+    // 更新可用令牌数量 storedPermits、下一个令牌可用时间 nextFreeTicketMicros
     resync(nowMicros);
     long returnValue = nextFreeTicketMicros;
+    // requiredPermits 是需要获取的令牌数量，storedPermits 是当前存储的令牌数量
     double storedPermitsToSpend = min(requiredPermits, this.storedPermits);
+    // 若存储的令牌数量不足，还需要的令牌数量
     double freshPermits = requiredPermits - storedPermitsToSpend;
+    // 还需要等待的时间
     long waitMicros =
         storedPermitsToWaitTime(this.storedPermits, storedPermitsToSpend)
             + (long) (freshPermits * stableIntervalMicros);
 
+    // 原子更新 nextFreeTicketMicros（增加 waitMicros）
     this.nextFreeTicketMicros = LongMath.saturatedAdd(nextFreeTicketMicros, waitMicros);
+    // 扣除可用的令牌数量
     this.storedPermits -= storedPermitsToSpend;
+    // 返回下一个可用令牌的时间
     return returnValue;
   }
 
@@ -381,10 +390,14 @@ abstract class SmoothRateLimiter extends RateLimiter {
 
   /** Updates {@code storedPermits} and {@code nextFreeTicketMicros} based on the current time. */
   void resync(long nowMicros) {
-    // if nextFreeTicket is in the past, resync to now
+    // 如果 nextFreeTicket 是过去的时间，同步成当前时间
     if (nowMicros > nextFreeTicketMicros) {
+      // coolDownIntervalMicros() 是一个令牌的「冷却时间」
+      // nowMicros - nextFreeTicketMicros 为已逝时间，除以「冷却时间」为是否的令牌数量 newPermits
       double newPermits = (nowMicros - nextFreeTicketMicros) / coolDownIntervalMicros();
+      // 重新计算 storedPermits，不会超过令牌最大数量 maxPermits
       storedPermits = min(maxPermits, storedPermits + newPermits);
+      // 重置 nextFreeTicketMicros
       nextFreeTicketMicros = nowMicros;
     }
   }

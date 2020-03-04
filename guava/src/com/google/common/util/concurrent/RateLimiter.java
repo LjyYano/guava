@@ -110,22 +110,8 @@ public abstract class RateLimiter {
    *     permits become available per second
    * @throws IllegalArgumentException if {@code permitsPerSecond} is negative or zero
    */
-  // TODO(user): "This is equivalent to
-  // {@code createWithCapacity(permitsPerSecond, 1, TimeUnit.SECONDS)}".
+  // 两个工厂方法
   public static RateLimiter create(double permitsPerSecond) {
-    /*
-     * The default RateLimiter configuration can save the unused permits of up to one second. This
-     * is to avoid unnecessary stalls in situations like this: A RateLimiter of 1qps, and 4 threads,
-     * all calling acquire() at these moments:
-     *
-     * T0 at 0 seconds
-     * T1 at 1.05 seconds
-     * T2 at 2 seconds
-     * T3 at 3 seconds
-     *
-     * Due to the slight delay of T1, T2 would have to sleep till 2.05 seconds, and T3 would also
-     * have to sleep till 3.05 seconds.
-     */
     return create(permitsPerSecond, SleepingStopwatch.createFromSystemTimer());
   }
 
@@ -217,11 +203,13 @@ public abstract class RateLimiter {
   @MonotonicNonNull private volatile Object mutexDoNotUseDirectly;
 
   private Object mutex() {
+    // 单例
     Object mutex = mutexDoNotUseDirectly;
     if (mutex == null) {
       synchronized (this) {
         mutex = mutexDoNotUseDirectly;
         if (mutex == null) {
+          // google 写的代码就是讲究~
           mutexDoNotUseDirectly = mutex = new Object();
         }
       }
@@ -300,7 +288,9 @@ public abstract class RateLimiter {
    */
   @CanIgnoreReturnValue
   public double acquire(int permits) {
+    // 获取需要等待的时间
     long microsToWait = reserve(permits);
+    // 线程休眠，时间长度是 microsToWait
     stopwatch.sleepMicrosUninterruptibly(microsToWait);
     return 1.0 * microsToWait / SECONDS.toMicros(1L);
   }
@@ -313,6 +303,7 @@ public abstract class RateLimiter {
    */
   final long reserve(int permits) {
     checkPermits(permits);
+    // mutex() 是一个普通单例对象，为了同步加锁
     synchronized (mutex()) {
       return reserveAndGetWaitLength(permits, stopwatch.readMicros());
     }
@@ -426,11 +417,12 @@ public abstract class RateLimiter {
   }
 
   /**
-   * Reserves next ticket and returns the wait time that the caller must wait for.
+   * 预约下一个令牌，返回获得下一个令牌需要的等待时间
    *
-   * @return the required wait time, never negative
+   * @return 需要等待的时间，不会为负
    */
   final long reserveAndGetWaitLength(int permits, long nowMicros) {
+    // 预约 permits 数量的令牌，返回获得 permits 数量令牌的时间
     long momentAvailable = reserveEarliestAvailable(permits, nowMicros);
     return max(momentAvailable - nowMicros, 0);
   }
